@@ -1,0 +1,121 @@
+import socket
+import mysql.connector
+from mysql.connector import Error
+from datetime import datetime
+
+DB_HOST = "server01-mysql"
+DB_USER = "root"
+DB_PASSWORD = "my-secret-pw"
+DB_NAME = "itt440_project"
+PORT = 8084
+
+def addUserToDatabase(conn, username, points, datetime):
+    insertQuery = "INSERT INTO usertable (username, userpoints, datetime_stamps) VALUES (%s, %s, %s)"
+    values = (username, points, datetime)
+    cursor = conn.cursor()
+    cursor.execute(insertQuery, values)
+    conn.commit()
+    cursor.close()
+
+def deleteUserFromDatabase(conn, username):
+    countQuery = "SELECT COUNT(*) FROM usertable WHERE username = %s"
+    cursor = conn.cursor()
+    cursor.execute(countQuery, (username,))
+    userCount = cursor.fetchone()[0]
+    cursor.close()
+
+    if userCount > 0:
+        deleteQuery = "DELETE FROM usertable WHERE username = %s"
+        cursor = conn.cursor()
+        cursor.execute(deleteQuery, (username,))
+        conn.commit()
+        cursor.close()
+    else:
+        print("NO USER IN THE DATABASE")
+
+def showDatabase(conn):
+    selectQuery = "SELECT * FROM usertable"
+    cursor = conn.cursor()
+    cursor.execute(selectQuery)
+    rows = cursor.fetchall()
+
+    print("\nDatabase Contents:")
+    print("---------------------------------")
+    for row in rows:
+        print("\t".join(str(field) if field is not None else "NULL" for field in row))
+    print("---------------------------------")
+
+    cursor.close()
+
+def getCurrentDatetime():
+    now = datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S")
+
+def main():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind(("172.18.0.3", PORT))
+    server_socket.listen(3)
+
+    print("Server is running...")
+
+    try:
+        conn = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME)
+        cursor = conn.cursor()
+
+        createTableQuery = "CREATE TABLE IF NOT EXISTS usertable (username VARCHAR(50), userpoints INT, datetime_stamps DATETIME)"
+        cursor.execute(createTableQuery)
+        conn.commit()
+
+        while True:
+            client_socket, address = server_socket.accept()
+            print("Client connected")
+
+            request = client_socket.recv(256).decode()
+            print("Received request:", request)
+
+            response = ""
+
+            tokens = request.split(" ")
+            if tokens:
+                if tokens[0] == "ADD_USER" and len(tokens) == 3:
+                    username = tokens[1]
+                    points = int(tokens[2])
+                    datetime = getCurrentDatetime()
+
+                    addUserToDatabase(conn, username, points, datetime)
+                    response = "User added successfully"
+                elif tokens[0] == "DELETE_USER" and len(tokens) == 2:
+                    username = tokens[1]
+
+                    deleteUserFromDatabase(conn, username)
+                    response = "User deleted successfully"
+                elif tokens[0] == "SHOW_DB" and len(tokens) == 1:
+                    showDatabase(conn)
+                    response = "Database contents sent"
+                elif tokens[0] == "END_CONN" and len(tokens) == 1:
+                    response = "Connection ended"
+                    client_socket.close()
+                    break
+                else:
+                    response = "Invalid request"
+            else:
+                response = "Invalid request"
+
+            client_socket.send(response.encode())
+            print("Response sent:", response)
+
+            client_socket.close()
+            print("Client disconnected")
+
+    except Error as e:
+        print("Error connecting to MySQL:", e)
+
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
+            print("MySQL connection closed")
+
+if __name__ == "__main__":
+    main()
